@@ -2,56 +2,113 @@ name: Build
 
 on:
   workflow_dispatch:
+    inputs:
+      forceBuild:
+        description: "Force image build"
+        required: false
+        default: false
+        type: boolean
   push:
-    branches: ['master']
-  schedule:
-    - cron: '0 15 */5 * *'
+    branches: ["master"]
   pull_request:
-    branches: ['master']
+    branches: ["master"]
+  schedule:
+    - cron: "0 4 * * *"
+
+env:
+  SPOTWEB_REPOSITORY: https://github.com/spotweb/spotweb
 
 jobs:
   build:
+    name: Build and deploy Spotweb Docker image
+    permissions:
+      id-token: write
+      packages: write
+      contents: read
+      attestations: write
+      artifact-metadata: write
     runs-on: ubuntu-latest
 
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: master
+            label: latest
+          - branch: develop
+            label: dev-latest
+
     steps:
-      - name: Login to Docker Hub
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
+      - name: Clone Spotweb ${{ matrix.branch }} branch
+        id: repo
+        run: |
+          git config --global user.name 'username'
+          git config --global user.email 'username@users.noreply.github.com'
+          git clone -b ${{ matrix.branch }} --depth 1 ${{ env.SPOTWEB_REPOSITORY }}
+          SPOTWEB_SHA=$(git -C spotweb rev-parse HEAD)
+          echo "spotweb_sha=${SPOTWEB_SHA}" >> $GITHUB_OUTPUT
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GH_TOKEN }}
+
+      - name: Check if Docker image already exists
+        id: check
+        run: |
+          BUILD_IMAGE=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.forceBuild == 'true' }}
+          docker manifest inspect ghcr.io/${{ github.repository }}:sha-${{ steps.repo.outputs.spotweb_sha }} > /dev/null || BUILD_IMAGE=true
+          echo "build_image=${BUILD_IMAGE}" >> $GITHUB_OUTPUT
+
+      - name: Prepare GitHub metadata
+        if: ${{ steps.check.outputs.build_image == 'true' }}
+        id: github_meta
+        run: |
+          REPOSITORY_NAME=${GITHUB_REPOSITORY#*/}
+          echo "repository_name=${REPOSITORY_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Prepare Docker metadata
+        if: ${{ steps.check.outputs.build_image == 'true' }}
+        id: docker_meta
+        uses: docker/metadata-action@v6
         with:
           images: |
-            erikdevries/spotweb
-            erikdevries/rpi-spotweb
+            docker.io/fontaaaaa/spotweb
+            ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=sha
+            type=raw,value=sha-${{ steps.repo.outputs.spotweb_sha }}
+            type=raw,value=${{ matrix.label }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        if: ${{ steps.check.outputs.build_image == 'true' }}
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         id: buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and export to Docker
-        uses: docker/build-push-action@v5
+        if: ${{ steps.check.outputs.build_image == 'true' }}
+        uses: docker/build-push-action@v7
         with:
           context: .
+          file: Dockerfile
           load: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          build-args: |
+            SPOTWEB_REPOSITORY=${{ env.SPOTWEB_REPOSITORY }}
+            SPOTWEB_BRANCH=${{ matrix.branch }}
 
       - name: Run Spotweb with SQLite for testing
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         run: |
-          DOCKER_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n 1)
+          DOCKER_TAG=$(echo "${{ steps.docker_meta.outputs.tags }}" | head -n 1)
           docker run -d --name spotweb \
             -e TZ=Europe/Amsterdam \
             -e DB_ENGINE='pdo_sqlite' \
@@ -60,30 +117,70 @@ jobs:
             $DOCKER_TAG
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        if: ${{ steps.check.outputs.build_image == 'true' }}
+        uses: actions/setup-node@v6
         with:
           node-version: lts/*
 
       - name: Install dependencies
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         run: npm ci
 
       - name: Install Playwright Browsers
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         run: npx playwright install --with-deps
 
       - name: Run Playwright tests
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         run: npx playwright test
 
       - name: Stop Docker container
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         run: docker stop spotweb
 
       - name: Remove Docker container
+        if: ${{ steps.check.outputs.build_image == 'true' }}
         run: docker rm spotweb
 
+      - name: Login to Docker Hub
+        if: ${{ steps.check.outputs.build_image == 'true' && github.event_name != 'pull_request' }}
+        uses: docker/login-action@v4
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Build and push
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v5
+        id: docker_push
+        if: ${{ steps.check.outputs.build_image == 'true' && github.event_name != 'pull_request' }}
+        uses: docker/build-push-action@v7
         with:
           context: .
+          file: Dockerfile
           platforms: linux/amd64,linux/arm64,linux/arm/v7
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+          cache-to: type=gha
+          tags: ${{ steps.docker_meta.outputs.tags }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          build-args: |
+            SPOTWEB_REPOSITORY=${{ env.SPOTWEB_REPOSITORY }}
+            SPOTWEB_BRANCH=${{ matrix.branch }}
+
+      - name: Attest Container Registry image
+        if: ${{ steps.check.outputs.build_image == 'true' && github.event_name != 'pull_request' }}
+        uses: actions/attest@v4
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.docker_push.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest Docker Hub image
+        if: ${{ steps.check.outputs.build_image == 'true' && github.event_name != 'pull_request' }}
+        uses: actions/attest@v4
+        with:
+          subject-name: docker.io/${{ vars.DOCKERHUB_USERNAME }}/spotweb
+          subject-digest: ${{ steps.docker_push.outputs.digest }}
+          push-to-registry: true
+

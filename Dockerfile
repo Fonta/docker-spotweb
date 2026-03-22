@@ -1,5 +1,11 @@
 FROM alpine:3.22
-LABEL maintainer="Erik de Vries <docker@erikdevries.nl>"
+
+LABEL org.opencontainers.image.authors="Fonta <docker@fonta.nl>"
+LABEL org.opencontainers.image.source="https://github.com/fonta/docker-spotweb"
+LABEL version="1.0.0"
+
+ARG SPOTWEB_REPOSITORY=https://github.com/spotweb/spotweb
+ARG SPOTWEB_BRANCH=develop
 
 # Disable timeout for starting services to make "wait for sql" work
 ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
@@ -49,13 +55,12 @@ RUN apk --no-cache upgrade && \
         s6-overlay \
     && \
     # Symlink php84 to php
-    ln -sf /usr/bin/php84 /usr/bin/php \
-    && \
+    ln -sf /usr/bin/php84 /usr/bin/php && \
     # Symlink php-fpm84 to php-fpm
-    ln -sf /usr/sbin/php-fpm84 /usr/sbin/php-fpm \
-    && \
-    git clone --depth=1 https://github.com/spotweb/spotweb.git /app \
-    && \
+    ln -sf /usr/sbin/php-fpm84 /usr/sbin/php-fpm && \
+    git clone --no-checkout -b ${SPOTWEB_BRANCH} --depth=1 --single-branch ${SPOTWEB_REPOSITORY} /app && \
+    cd /app && \
+    git checkout && \
     rm -rf /app/.git
 
 # Configure Spotweb

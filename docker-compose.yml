@@ -1,25 +1,47 @@
 services:
+  spotwebdb:
+    image: postgres:16-alpine
+    container_name: spotwebdb
+    restart: unless-stopped
+    volumes:
+      - ./spotwebdb:/var/lib/postgresql/data
+    environment:
+      TZ: Europe/Amsterdam
+      PG_TZ: Europe/Amsterdam
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Spotweb123!
+      POSTGRES_DB: spotwebdb
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U spotweb" ]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
   spotweb:
-    image: erikdevries/spotweb
+    image: fontaaaaa/spotweb:dev-latest
+    container_name: spotweb
+    hostname: spotweb
     environment:
       TZ: Europe/Amsterdam
       CRON_INTERVAL: '*/5 * * * *'
+      DB_ENGINE: pdo_pgsql
+      DB_HOST: spotwebdb
+      DB_PORT: 5432
+      DB_NAME: spotwebdb
+      DB_USER: postgres
+      DB_PASS: Spotweb123!
     ports:
-      - '8085:80'
+      - 8085:80
     depends_on:
-      - 'mysql'
+      spotwebdb:
+        condition: service_healthy
     # volumes:
-    #   - ./cache:/app/cache
-
-  mysql:
-    image: 'mysql'
-    environment:
-      MYSQL_ROOT_PASSWORD: 123
-      MYSQL_USER: spotweb
-      MYSQL_PASSWORD: spotweb
-      MYSQL_DATABASE: spotweb
-    volumes:
-      - dbdata:/var/lib/mysql
-
-volumes:
-  dbdata:
+      # - ./spotweb/cache:/app/cache
+    restart: unless-stopped
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost || exit 1
+      interval: 60s
+      retries: 5
+      start_period: 20s
+      timeout: 5s

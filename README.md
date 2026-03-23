@@ -1,11 +1,16 @@
+[![](https://img.shields.io/docker/pulls/fontaaaaa/spotweb.svg)](https://hub.docker.com/r/fontaaaaa/spotweb/)
 
+# Docker Spotweb image
+Docker image running Alpine and Spotweb
 
-# Dockerfile to run Spotweb
-The main goal of this project is to easily set up Spotweb using Docker.
-The dev-latest tag of the docker image is built using the develop branch of [Spotweb](https://github.com/spotweb/spotweb)
+# Image builds
+The image with the `dev-latest` tag of the docker image is built using the develop branch of [Spotweb](https://github.com/spotweb/spotweb).
+The image with the `latest` tag is built using the master branch of Spotweb.
+
+Image builds have been scheduled on a daily basis, but will only produce a new imaghe when changes are detected in the branch.
 
 ## Forked from
-This repository has been forked from [Erik de Vries](https://github.com/edv/docker-spotweb) and adjusted to my needs to be able to run the develop branch of Spotweb and have it build on a daily basis.
+This repository has been forked from [Erik de Vries](https://github.com/edv/docker-spotweb) and adjusted to my needs have it build on a daily basis.
 
 ## Getting started
 The easiest way to get Spotweb up and running is using the included `docker-compose.yml` file. This will run Spotweb (image published to Docker Hub) together with Postgres.
